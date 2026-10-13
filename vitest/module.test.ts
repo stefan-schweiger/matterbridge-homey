@@ -91,6 +91,7 @@ describe('HomeyPlatform', () => {
     unregisterOnShutdown: false,
   };
   let platform: HomeyPlatform;
+  let selectSerials: string[] = [];
 
   const endpoint = (deviceId: string): MatterbridgeEndpoint => {
     const bridgedDevice = platform.bridgedDevices.get(deviceId);
@@ -156,7 +157,9 @@ describe('HomeyPlatform', () => {
     platform = new HomeyPlatform(getMatterbridge(), log, config, homey);
     // @ts-expect-error - setMatterNode is intentionally private
     platform.setMatterNode(addBridgedEndpoint, removeBridgedEndpoint, removeAllBridgedEndpoints, addVirtualEndpoint);
+    const setSelectDevice = vi.spyOn(platform, 'setSelectDevice');
     await platform.onStart('Vitest');
+    selectSerials = setSelectDevice.mock.calls.map(([serial]) => serial);
 
     expect(homey.connect).toHaveBeenCalledTimes(1);
     expect([...platform.bridgedDevices.keys()].toSorted()).toEqual([ids.light, ids.socket, ids.thermostat, ids.sensor, ids.cover, ids.lock, ids.fan].toSorted());
@@ -164,7 +167,6 @@ describe('HomeyPlatform', () => {
   });
 
   test('should offer the registered devices in the picker with their Matter serial number', () => {
-    const selectSerials = platform.getSelectDevices().map((select) => select.serial);
     for (const deviceId of platform.bridgedDevices.keys()) expect(selectSerials).toContain(endpoint(deviceId).serialNumber);
     expect(selectSerials).not.toContain(ids.light);
   });

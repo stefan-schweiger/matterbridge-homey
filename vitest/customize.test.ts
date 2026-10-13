@@ -40,6 +40,8 @@ const devices = [
 describe('Remapping devices and excluding capabilities', () => {
   const homey = new FakeHomey();
   let platform: HomeyPlatform;
+  let selectDevices: Parameters<HomeyPlatform['setSelectDevice']>[] = [];
+  let selectEntities: string[] = [];
 
   const endpoint = (deviceId: string): MatterbridgeEndpoint => {
     const bridgedDevice = platform.bridgedDevices.get(deviceId);
@@ -75,8 +77,12 @@ describe('Remapping devices and excluding capabilities', () => {
     );
     // @ts-expect-error - setMatterNode is intentionally private
     platform.setMatterNode(addBridgedEndpoint, removeBridgedEndpoint, removeAllBridgedEndpoints, addVirtualEndpoint);
+    const setSelectDevice = vi.spyOn(platform, 'setSelectDevice');
+    const setSelectEntity = vi.spyOn(platform, 'setSelectEntity');
     await platform.onStart('Vitest');
     await platform.onConfigure();
+    selectDevices = setSelectDevice.mock.calls;
+    selectEntities = setSelectEntity.mock.calls.map(([name]) => name);
   });
 
   afterAll(async () => {
@@ -108,12 +114,11 @@ describe('Remapping devices and excluding capabilities', () => {
   });
 
   test('should offer the exposed capabilities, including the excluded ones, in the pickers', () => {
-    const multi = platform.getSelectDevices().find((select) => select.name === 'Multisensor');
-    expect(multi?.entities?.map((entity) => entity.name)).toEqual(['alarm_motion', 'alarm_occupancy', 'measure_humidity', 'measure_battery']);
-    expect(platform.getSelectDevices().some((select) => select.name === 'Only humidity')).toBe(true);
-    const entities = platform.getSelectEntities().map((entity) => entity.name);
-    expect(entities).toContain('meter_power');
-    expect(entities).toContain('measure_temperature.outdoorTemperature');
-    expect(entities).not.toContain('button.repair');
+    const multi = selectDevices.find(([, name]) => name === 'Multisensor');
+    expect(multi?.[4]?.map((entity) => entity.name)).toEqual(['alarm_motion', 'alarm_occupancy', 'measure_humidity', 'measure_battery']);
+    expect(selectDevices.some(([, name]) => name === 'Only humidity')).toBe(true);
+    expect(selectEntities).toContain('meter_power');
+    expect(selectEntities).toContain('measure_temperature.outdoorTemperature');
+    expect(selectEntities).not.toContain('button.repair');
   });
 });
