@@ -1,0 +1,15 @@
+{
+  "name": "matterbridge-homey",
+  "type": "DynamicPlatform",
+  "address": "",
+  "token": "",
+  "whiteList": [],
+  "blackList": [],
+  "zoneWhiteList": [],
+  "lightList": [],
+  "outletList": [],
+  "capabilityBlackList": [],
+  "deviceCapabilityBlackList": {},
+  "debug": false,
+  "unregisterOnShutdown": false
+}

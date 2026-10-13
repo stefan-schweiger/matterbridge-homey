@@ -1,0 +1,120 @@
+{
+  "title": "Matterbridge Homey",
+  "description": "matterbridge-homey: expose Athom Homey Pro devices to Matter",
+  "type": "object",
+  "required": ["address", "token"],
+  "properties": {
+    "name": {
+      "title": "Plugin Name",
+      "description": "Plugin name",
+      "type": "string",
+      "readOnly": true,
+      "ui:widget": "hidden"
+    },
+    "type": {
+      "title": "Plugin Type",
+      "description": "Plugin type",
+      "type": "string",
+      "readOnly": true,
+      "ui:widget": "hidden"
+    },
+    "address": {
+      "title": "Homey Address",
+      "description": "Local address of your Homey Pro, e.g. http://192.168.1.50 or https://192-168-1-50.homey.homeylocal.com",
+      "type": "string"
+    },
+    "token": {
+      "title": "API Key",
+      "description": "Homey API key. Create it in the Homey web app (my.homey.app) under Settings > API Keys. It needs at least the 'View devices', 'Control devices' and 'View zones' permissions.",
+      "type": "string",
+      "ui:widget": "password"
+    },
+    "whiteList": {
+      "title": "White List",
+      "description": "Only the devices in the list will be exposed. If the list is empty, all the devices will be exposed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "blackList": {
+      "title": "Black List",
+      "description": "The devices in the list will not be exposed. If the list is empty, no devices will be excluded.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "zoneWhiteList": {
+      "title": "Zone White List",
+      "description": "Only the devices in these Homey zones (rooms) will be exposed. Sub-zones are included. If the list is empty, devices from all zones are exposed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "lightList": {
+      "title": "Light List",
+      "description": "The devices in the list will be exposed like lights, whatever their Homey class (devices need the onoff or dim capability).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "outletList": {
+      "title": "Outlet List",
+      "description": "The devices in the list will be exposed like outlets (plugs), whatever their Homey class (devices need the onoff capability).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "capabilityBlackList": {
+      "title": "Capability Black List",
+      "description": "The Homey capabilities in the list will not be exposed for any device (e.g. meter_power or measure_temperature.outdoorTemperature).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectEntityFrom": "name"
+    },
+    "deviceCapabilityBlackList": {
+      "title": "Device Capability Black List",
+      "description": "Homey capabilities not to be exposed for a single device. Enter in the first field the name of the device and in the list add all the capabilities to exclude.",
+      "type": "object",
+      "uniqueItems": true,
+      "selectFrom": "name",
+      "additionalProperties": {
+        "description": "List of Homey capabilities not to be exposed for this device (e.g. measure_power).",
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true,
+        "selectDeviceEntityFrom": "name"
+      }
+    },
+    "debug": {
+      "title": "Enable Debug",
+      "description": "Enable debug mode for the plugin. Only for debugging purposes, not recommended for production use.",
+      "type": "boolean",
+      "default": false
+    },
+    "unregisterOnShutdown": {
+      "title": "Unregister On Shutdown",
+      "description": "Unregister all devices on shutdown. Only for debugging purposes, not recommended for production use.",
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
