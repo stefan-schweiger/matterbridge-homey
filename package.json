@@ -1,6 +1,6 @@
 {
   "name": "matterbridge-homey",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Matterbridge plugin that exposes Athom Homey Pro devices to Matter",
   "author": "Stefan Schweiger",
   "license": "Apache-2.0",

@@ -1,6 +1,6 @@
 /**
  * pack-tarball.mjs
- * Version: 1.0.0
+ * Version: 1.1.0
  *
  * Builds the production tarball of the plugin, ready to upload in the Matterbridge frontend
  * (Plugins > Install > Upload) or to install with `npm install -g <tarball> --omit=dev`.
@@ -10,6 +10,9 @@
  *   2. stages the package in a temporary directory with a package.json without devDependencies, scripts and automator
  *   3. writes an npm-shrinkwrap.json from the project lock file, so the tested dependency versions are installed
  *   4. packs it into the project root and rebuilds the development dist
+ *
+ * Development builds are marked private: when Matterbridge finds a plugin missing at start (e.g. in a recreated Docker
+ * container), it reinstalls a private plugin from the last uploaded tarball, and any other from npm.
  *
  * Usage:
  *   node scripts/pack-tarball.mjs            Version <version>-dev-<yyyymmdd>-<HHMM>, so every upload is recognizable
@@ -55,6 +58,8 @@ try {
   delete production.devDependencies;
   delete production.scripts;
   delete production.automator;
+  // npm has no development builds, so Matterbridge must reinstall them from the uploaded tarball.
+  if (!isRelease) production.private = true;
   writeFileSync(path.join(stage, 'package.json'), `${JSON.stringify(production, null, 2)}\n`);
 
   // Prune the dev dependencies from the copied lock file and turn it into a shrinkwrap.

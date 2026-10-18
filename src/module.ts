@@ -21,8 +21,8 @@
  * limitations under the License.
  */
 
-import { type BasePlatformConfig, MatterbridgeDynamicPlatform, type PlatformMatterbridge } from 'matterbridge';
-import { type AnsiLogger, CYAN, db, idn, type LogLevel, nf, rs } from 'matterbridge/logger';
+import { type BasePlatformConfig, MatterbridgeDynamicPlatform, type PlatformMatterbridge, roboticVacuumCleaner } from 'matterbridge';
+import { type AnsiLogger, CYAN, db, idn, type LogLevel, nf, rs, wr } from 'matterbridge/logger';
 import { fireAndForget, getErrorMessage, inspectError, isValidArray, isValidObject, isValidString } from 'matterbridge/utils';
 
 import { getExposedCapabilities } from './features.js';
@@ -297,22 +297,26 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
     if (!this.validateDevice(keys)) return;
 
     const excludedCapabilities = new Set([...this.config.capabilityBlackList, ...keys.flatMap((key) => this.config.deviceCapabilityBlackList[key] ?? [])]);
-    const bridgedDevice = HomeyBridgedDevice.create({
-      device: customizeDevice(remapped, undefined, excludedCapabilities),
-      name,
-      connection: this.homey,
-      vendorId: this.matterbridge.aggregatorVendorId,
-      logLevel: this.log.logLevel,
-      configUrl,
-    });
-    if (!bridgedDevice) {
-      this.log.info(`Device ${CYAN}${name}${nf} has no capabilities left after the capability black lists. Skipping...`);
-      return;
-    }
+    // A device that fails to build or register is skipped, so it doesn't stop the plugin from starting.
     try {
+      const bridgedDevice = HomeyBridgedDevice.create({
+        device: customizeDevice(remapped, undefined, excludedCapabilities),
+        name,
+        connection: this.homey,
+        vendorId: this.matterbridge.aggregatorVendorId,
+        logLevel: this.log.logLevel,
+        configUrl,
+      });
+      if (!bridgedDevice) {
+        this.log.info(`Device ${CYAN}${name}${nf} has no capabilities left after the capability black lists. Skipping...`);
+        return;
+      }
       this.log.info(`Registering device ${idn}${name}${rs}${nf} class ${CYAN}${remapped.virtualClass ?? remapped.class}${nf}...`);
       await this.registerDevice(bridgedDevice.endpoint);
       this.bridgedDevices.set(device.id, bridgedDevice);
+      if (bridgedDevice.endpoint.deviceTypes.has(roboticVacuumCleaner.code)) {
+        this.log.warn(`Device ${CYAN}${name}${wr} is a robotic vacuum cleaner: Apple Home doesn't support it in a bridge. If you use Apple Home, add it to the black list.`);
+      }
     } catch (error) {
       inspectError(this.log, `Failed to register device ${name}`, error);
     }

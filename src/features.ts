@@ -40,12 +40,14 @@ import {
   onOffPlugInUnit,
   pressureSensor,
   rainSensor,
+  roboticVacuumCleaner,
   smokeCoAlarm,
   temperatureSensor,
   thermostat,
   waterLeakDetector,
   windowCovering,
 } from 'matterbridge';
+import { MatterbridgeRvcCleanModeServer, MatterbridgeRvcOperationalStateServer, MatterbridgeRvcRunModeServer } from 'matterbridge/devices';
 import type { ActionContext } from 'matterbridge/matter';
 import {
   AirQuality,
@@ -65,6 +67,9 @@ import {
   Pm25ConcentrationMeasurement,
   PressureMeasurement,
   RelativeHumidityMeasurement,
+  RvcCleanMode,
+  RvcOperationalState,
+  RvcRunMode,
   SmokeCoAlarm,
   TemperatureMeasurement,
   Thermostat,
@@ -141,6 +146,8 @@ const coveringClasses = new Set(['windowcoverings', 'blinds', 'curtain', 'sunsha
 const fanClasses = new Set(['fan', 'airpurifier']);
 /** Homey device classes exposed as Matter door locks. */
 const lockClasses = new Set(['lock']);
+/** Homey device classes exposed as Matter robotic vacuum cleaners. */
+const vacuumClasses = new Set(['vacuumcleaner']);
 /** Homey device classes whose onoff sub-capabilities are outputs, e.g. onoff.output2 of a double socket. */
 const outputClasses = new Set(['socket', 'other']);
 
@@ -220,6 +227,8 @@ export function planFeatures(device: HomeyDevice): Feature[] {
     features.push(windowCoveringFeature(device));
   } else if (lockClasses.has(deviceClass) && hasCapability(device, 'locked')) features.push(doorLockFeature());
   else if (fanClasses.has(deviceClass) && hasOnOff) features.push(fanFeature(device));
+  // Only vacuums that can be started with a standard capability.
+  else if (vacuumClasses.has(deviceClass) && (hasOnOff || hasCapability(device, 'vacuumcleaner_state'))) features.push(vacuumFeature(device));
   // Any other device that can be switched, e.g. a TV or a routine. The onoff of a sensor usually switches its display.
   else if (hasOnOff && deviceClass !== 'sensor') features.push(plugFeature(device, 'onoff'));
 
@@ -239,7 +248,8 @@ export function planFeatures(device: HomeyDevice): Feature[] {
 
   // Sub-capabilities, e.g. the second output of a double socket (onoff.output2) or an outside temperature (measure_temperature.outside).
   // Without a main function, the first output becomes the main function of the device.
-  let hasMainFunction = features.length > 0 && features[0].clusters.some((cluster) => ['OnOff', 'Thermostat', 'WindowCovering', 'DoorLock', 'FanControl'].includes(cluster));
+  let hasMainFunction =
+    features.length > 0 && features[0].clusters.some((cluster) => ['OnOff', 'Thermostat', 'WindowCovering', 'DoorLock', 'FanControl', 'RvcRunMode'].includes(cluster));
   for (const capabilityId of device.capabilities) {
     const [base, sub] = capabilityId.split('.');
     if (sub === undefined) continue;
@@ -557,7 +567,8 @@ function climateFeature(device: HomeyDevice, isCooling: boolean): Feature | unde
         (value: Thermostat.SystemMode, _oldValue: Thermostat.SystemMode, actionContext: ActionContext) => {
           if (!isFromController(actionContext)) return;
           const modeId = Object.keys(systemModes).find((id) => systemModes[id] === value);
-          if (value === Thermostat.SystemMode.Off && !modeIds.has('off') && hasOnOff) context.set('onoff', false);
+          // onoff is the power switch: drivers don't always switch the device off with the off mode.
+          if (value === Thermostat.SystemMode.Off && hasOnOff) context.set('onoff', false);
           else if (modeId !== undefined && modeIds.has(modeId)) context.set('thermostat_mode', modeId);
           if (value !== Thermostat.SystemMode.Off && hasOnOff && context.value('onoff') === false) context.set('onoff', true);
         },
@@ -718,6 +729,192 @@ function doorLockFeature(): Feature {
       context.bind('locked', async (value) => {
         await endpoint.updateAttribute(DoorLock, 'lockState', lockState(value), endpoint.log);
       });
+    },
+  };
+}
+
+// ************************************************* Vacuums ********************************************************
+
+/** Matter run mode of an idle vacuum. */
+const vacuumIdleMode = 1;
+/** Matter run mode of a cleaning vacuum. */
+const vacuumCleaningMode = 2;
+
+/**
+ * Matter clean modes of the standard values of vacuumcleaner_job_mode
+ *
+ * The mode numbers are fixed per value, so they don't depend on the values a device offers. `off` isn't a clean mode.
+ */
+const vacuumCleanModes: Readonly<Record<string, RvcCleanMode.ModeOption>> = {
+  normal: { label: 'Normal', mode: 1, modeTags: [{ value: RvcCleanMode.ModeTag.Vacuum }] },
+  high: { label: 'High', mode: 2, modeTags: [{ value: RvcCleanMode.ModeTag.Vacuum }, { value: RvcCleanMode.ModeTag.DeepClean }] },
+  turbo: { label: 'Turbo', mode: 3, modeTags: [{ value: RvcCleanMode.ModeTag.Vacuum }, { value: RvcCleanMode.ModeTag.Max }] },
+  mop: { label: 'Mop', mode: 4, modeTags: [{ value: RvcCleanMode.ModeTag.Mop }] },
+  auto: { label: 'Auto', mode: 5, modeTags: [{ value: RvcCleanMode.ModeTag.Auto }, { value: RvcCleanMode.ModeTag.Vacuum }] },
+};
+
+/** Matter operational states of the standard values of vacuumcleaner_state. */
+const vacuumStates: Readonly<Record<string, RvcOperationalState.OperationalState>> = {
+  cleaning: RvcOperationalState.OperationalState.Running,
+  spot_cleaning: RvcOperationalState.OperationalState.Running,
+  docked: RvcOperationalState.OperationalState.Docked,
+  charging: RvcOperationalState.OperationalState.Charging,
+  stopped: RvcOperationalState.OperationalState.Stopped,
+};
+
+/** Matter operational states of the standard values of operational_state. */
+const vacuumOperationalStates: Readonly<Record<string, RvcOperationalState.OperationalState>> = {
+  stopped: RvcOperationalState.OperationalState.Stopped,
+  running: RvcOperationalState.OperationalState.Running,
+  paused: RvcOperationalState.OperationalState.Paused,
+  error: RvcOperationalState.OperationalState.Error,
+};
+
+/**
+ * Get the standard vacuumcleaner_job_mode values of a vacuum that are Matter clean modes
+ *
+ * @param {HomeyDevice} device The Homey device.
+ * @returns {string[]} The values, empty when the device has no standard clean modes.
+ */
+export function getVacuumCleanModes(device: HomeyDevice): string[] {
+  if (!hasCapability(device, 'vacuumcleaner_job_mode')) return [];
+  const values = getCapability(device, 'vacuumcleaner_job_mode')?.values?.map((value) => value.id) ?? Object.keys(vacuumCleanModes);
+  return values.filter((value) => Object.hasOwn(vacuumCleanModes, value));
+}
+
+/**
+ * Look up a standard Homey enum value in a mapping
+ *
+ * @template T The mapped type.
+ * @param {Readonly<Record<string, T>>} mapping The mapping of the standard values.
+ * @param {HomeyCapabilityValue | undefined} value The Homey value.
+ * @returns {T | undefined} The mapped value, or undefined when the value isn't a standard value.
+ */
+function mapStandardValue<T>(mapping: Readonly<Record<string, T>>, value: HomeyCapabilityValue | undefined): T | undefined {
+  return typeof value === 'string' && Object.hasOwn(mapping, value) ? mapping[value] : undefined;
+}
+
+/**
+ * Create the robotic vacuum cleaner feature
+ *
+ * Only the standard capabilities and values of Homey are used: vacuumcleaner_state or onoff to start and stop the
+ * vacuum, the standard values of operational_state and vacuumcleaner_job_mode. Homey has no standard pause, so a paused
+ * vacuum is stopped in Homey.
+ *
+ * @param {HomeyDevice} device The Homey device.
+ * @returns {Feature} The feature.
+ */
+function vacuumFeature(device: HomeyDevice): Feature {
+  const hasState = hasCapability(device, 'vacuumcleaner_state');
+  const cleanModeIds = getVacuumCleanModes(device);
+  const { OperationalState } = RvcOperationalState;
+  return {
+    name: 'vacuum',
+    capabilities: ['vacuumcleaner_state', 'onoff', 'operational_state', 'vacuumcleaner_job_mode'],
+    deviceTypes: [roboticVacuumCleaner],
+    clusters: ['RvcRunMode', 'RvcCleanMode', 'RvcOperationalState'],
+    build: (context) => {
+      const { endpoint } = context;
+      const operationalState = (): RvcOperationalState.OperationalState => {
+        const operational = mapStandardValue(vacuumOperationalStates, context.value('operational_state'));
+        if (operational === OperationalState.Paused || operational === OperationalState.Error) return operational;
+        return (
+          mapStandardValue(vacuumStates, context.value('vacuumcleaner_state')) ??
+          operational ??
+          (context.value('onoff') === true ? OperationalState.Running : OperationalState.Stopped)
+        );
+      };
+      const operationalError = (state: RvcOperationalState.OperationalState): RvcOperationalState.ErrorStateStruct =>
+        state === OperationalState.Error
+          ? { errorStateId: RvcOperationalState.ErrorState.UnableToCompleteOperation }
+          : { errorStateId: RvcOperationalState.ErrorState.NoError, errorStateDetails: 'Fully operational' };
+      // A paused vacuum is still in its cleaning run.
+      const runMode = (state: RvcOperationalState.OperationalState): number =>
+        state === OperationalState.Running || state === OperationalState.Paused ? vacuumCleaningMode : vacuumIdleMode;
+      // A job mode that isn't a clean mode, e.g. off, shows the first clean mode.
+      const cleanMode = (): number => {
+        const jobMode = context.value('vacuumcleaner_job_mode');
+        return vacuumCleanModes[typeof jobMode === 'string' && cleanModeIds.includes(jobMode) ? jobMode : cleanModeIds[0]].mode;
+      };
+
+      const state = operationalState();
+      endpoint.behaviors.require(MatterbridgeRvcRunModeServer, {
+        supportedModes: [
+          { label: 'Idle', mode: vacuumIdleMode, modeTags: [{ value: RvcRunMode.ModeTag.Idle }] },
+          { label: 'Cleaning', mode: vacuumCleaningMode, modeTags: [{ value: RvcRunMode.ModeTag.Cleaning }] },
+        ],
+        currentMode: runMode(state),
+      });
+      if (cleanModeIds.length > 0) {
+        endpoint.behaviors.require(MatterbridgeRvcCleanModeServer, { supportedModes: cleanModeIds.map((id) => vacuumCleanModes[id]), currentMode: cleanMode() });
+      }
+      endpoint.behaviors.require(MatterbridgeRvcOperationalStateServer, {
+        phaseList: null,
+        currentPhase: null,
+        countdownTime: null,
+        operationalStateList: [
+          OperationalState.Stopped,
+          OperationalState.Running,
+          OperationalState.Paused,
+          OperationalState.Error,
+          OperationalState.SeekingCharger,
+          OperationalState.Charging,
+          OperationalState.Docked,
+        ].map((operationalStateId) => ({ operationalStateId })),
+        operationalState: state,
+        operationalError: operationalError(state),
+      });
+
+      // The Matter servers call the handlers before they check the command, so the handlers only act where the servers accept it.
+      const start = (): void => {
+        if (hasState) context.set('vacuumcleaner_state', 'cleaning', true);
+        else context.set('onoff', true, true);
+      };
+      const stop = (vacuumState: 'stopped' | 'docked', reflect: boolean): void => {
+        if (hasState) context.set('vacuumcleaner_state', vacuumState, reflect);
+        else context.set('onoff', false, reflect);
+      };
+      endpoint.addCommandHandler('RvcRunMode.changeToMode', ({ request, attributes }) => {
+        if (request.newMode === attributes.currentMode) return;
+        if (request.newMode === vacuumCleaningMode) start();
+        else if (request.newMode === vacuumIdleMode) stop('stopped', true);
+      });
+      // Not reflected: the vacuum stays paused in Matter, so it can be resumed.
+      endpoint.addCommandHandler('RvcOperationalState.pause', ({ attributes }) => {
+        if (attributes.operationalState === OperationalState.Running || attributes.operationalState === OperationalState.SeekingCharger) stop('stopped', false);
+      });
+      endpoint.addCommandHandler('RvcOperationalState.resume', ({ attributes }) => {
+        if (attributes.operationalState === OperationalState.Paused) start();
+      });
+      endpoint.addCommandHandler('RvcOperationalState.goHome', ({ attributes }) => {
+        if (
+          attributes.operationalState === OperationalState.Stopped ||
+          attributes.operationalState === OperationalState.Running ||
+          attributes.operationalState === OperationalState.Paused
+        )
+          stop('docked', true);
+      });
+      if (cleanModeIds.length > 0) {
+        endpoint.addCommandHandler('RvcCleanMode.changeToMode', ({ request, attributes }) => {
+          const modeId = cleanModeIds.find((id) => vacuumCleanModes[id].mode === request.newMode);
+          // Matter only changes the clean mode of an idle vacuum.
+          if (modeId === undefined || request.newMode === attributes.currentMode || endpoint.getAttribute(RvcRunMode, 'currentMode') !== vacuumIdleMode) return;
+          context.set('vacuumcleaner_job_mode', modeId, true);
+        });
+      }
+
+      const update = async (): Promise<void> => {
+        const newState = operationalState();
+        await endpoint.updateAttribute(RvcOperationalState, 'operationalState', newState, endpoint.log);
+        await endpoint.updateAttribute(RvcOperationalState, 'operationalError', operationalError(newState), endpoint.log);
+        await endpoint.updateAttribute(RvcRunMode, 'currentMode', runMode(newState), endpoint.log);
+      };
+      for (const capabilityId of ['vacuumcleaner_state', 'operational_state', 'onoff']) context.bind(capabilityId, update);
+      if (cleanModeIds.length > 0) {
+        context.bind('vacuumcleaner_job_mode', async () => {
+          await endpoint.updateAttribute(RvcCleanMode, 'currentMode', cleanMode(), endpoint.log);
+        });
+      }
     },
   };
 }

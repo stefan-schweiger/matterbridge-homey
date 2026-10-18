@@ -4,9 +4,9 @@
  * @author Stefan Schweiger
  */
 
-import { colorTemperatureLight, dimmableLight, extendedColorLight, onOffLight, onOffPlugInUnit, thermostat } from 'matterbridge';
+import { colorTemperatureLight, dimmableLight, extendedColorLight, onOffLight, onOffPlugInUnit, roboticVacuumCleaner, thermostat } from 'matterbridge';
 
-import { getDeviceClass, getExposedCapabilities, planFeatures } from '../src/features.js';
+import { getDeviceClass, getExposedCapabilities, getVacuumCleanModes, planFeatures } from '../src/features.js';
 import { splitFeatures } from '../src/homeyDevice.js';
 import { getUniqueDeviceNames, isInZones } from '../src/module.js';
 import { createDevice, zones } from './fakeHomey.js';
@@ -23,6 +23,26 @@ describe('planFeatures', () => {
     const device = createDevice('1', 'Socket as light', 'socket', { onoff: true }, { virtualClass: 'light' });
     expect(getDeviceClass(device)).toBe('light');
     expect(planFeatures(device)[0].deviceTypes).toEqual([onOffLight]);
+  });
+
+  test('should only expose vacuums that use the standard capabilities', () => {
+    const modes = (...ids: string[]): { id: string }[] => ids.map((id) => ({ id }));
+    expect(planFeatures(createDevice('1', 'Vacuum', 'vacuumcleaner', { vacuumcleaner_state: 'docked' }))[0].deviceTypes).toEqual([roboticVacuumCleaner]);
+    expect(planFeatures(createDevice('1', 'Vacuum', 'vacuumcleaner', { onoff: false }))[0].deviceTypes).toEqual([roboticVacuumCleaner]);
+    // Homey's Matter driver uses the Matter state and mode numbers as values, not the standard values.
+    const matterVacuum = createDevice('1', 'Matter vacuum', 'vacuumcleaner', {
+      'operational_state': { value: '65', values: modes('0', '1', '65') },
+      'vacuumcleaner_job_mode': { value: '0', values: modes('0', '1') },
+      'button.operational_state_go_home': null,
+      'measure_battery': 97,
+    });
+    expect(planFeatures(matterVacuum)).toEqual([]);
+    expect(getVacuumCleanModes(createDevice('1', 'Vacuum', 'vacuumcleaner', { vacuumcleaner_job_mode: { value: '0', values: modes('0', '1') } }))).toEqual([]);
+    expect(getVacuumCleanModes(createDevice('1', 'Vacuum', 'vacuumcleaner', { vacuumcleaner_job_mode: { value: 'off', values: modes('off', 'turbo', 'mop') } }))).toEqual([
+      'turbo',
+      'mop',
+    ]);
+    expect(getVacuumCleanModes(createDevice('1', 'Vacuum', 'vacuumcleaner', { vacuumcleaner_job_mode: 'normal' }))).toEqual(['normal', 'high', 'turbo', 'mop', 'auto']);
   });
 
   test('should expose unknown classes with onoff as a plug', () => {

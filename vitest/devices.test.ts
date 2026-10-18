@@ -15,6 +15,7 @@ import {
   invokeBehaviorCommand,
   invokeSubscribeHandler,
   type MatterbridgeEndpoint,
+  roboticVacuumCleaner,
 } from 'matterbridge';
 import {
   AirQuality,
@@ -29,6 +30,9 @@ import {
   Pm25ConcentrationMeasurement,
   PowerSource,
   PressureMeasurement,
+  RvcCleanMode,
+  RvcOperationalState,
+  RvcRunMode,
   SmokeCoAlarm,
   TemperatureMeasurement,
   Thermostat,
@@ -108,6 +112,13 @@ const devices = [
     target_temperature: { value: 25, min: 10, max: 30, step: 0.5 },
     thermostat_mode: { value: 'heat', values: modes('fanonly', 'heat', 'cool', 'auto', 'dry') },
   }),
+  createDevice('vacuum', 'Vacuum', 'vacuumcleaner', {
+    vacuumcleaner_state: 'docked',
+    operational_state: 'stopped',
+    vacuumcleaner_job_mode: { value: 'normal', values: modes('off', 'normal', 'turbo', 'mop') },
+    measure_battery: 80,
+  }),
+  createDevice('onoff-vacuum', 'Simple vacuum', 'vacuumcleaner', { onoff: false }),
 ];
 
 describe('Homey device mapping', () => {
@@ -268,6 +279,11 @@ describe('Homey device mapping', () => {
     await invokeSubscribeHandler(aircon, Thermostat, 'systemMode', Thermostat.SystemMode.Heat, Thermostat.SystemMode.Cool);
     expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('aircon', 'thermostat_mode', 'heat');
     await settle();
+    // Off switches onoff, not the off mode, and keeps the mode for the next time it's switched on.
+    await invokeSubscribeHandler(aircon, Thermostat, 'systemMode', Thermostat.SystemMode.Off, Thermostat.SystemMode.Heat);
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('aircon', 'onoff', false);
+    expect(homey.setCapabilityValue).not.toHaveBeenCalledWith('aircon', 'thermostat_mode', 'off');
+    await settle();
 
     homey.report('aircon', 'onoff', false);
     await settle();
@@ -392,5 +408,70 @@ describe('Homey device mapping', () => {
     await invokeSubscribeHandler(split, Thermostat, 'systemMode', Thermostat.SystemMode.FanOnly, Thermostat.SystemMode.Dry);
     expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('split', 'thermostat_mode', 'fanonly');
     await settle();
+  });
+
+  test('should control a vacuum with the standard vacuum capabilities', async () => {
+    const vacuum = endpoint('vacuum');
+    const { OperationalState } = RvcOperationalState;
+    expect(vacuum.deviceTypes.has(roboticVacuumCleaner.code)).toBe(true);
+    expect(vacuum.hasClusterServer(PowerSource)).toBe(true);
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Docked);
+    expect(vacuum.getAttribute(RvcRunMode, 'currentMode')).toBe(1);
+    expect(vacuum.getAttribute(RvcCleanMode, 'supportedModes')?.map((mode: RvcCleanMode.ModeOption) => mode.label)).toEqual(['Normal', 'Turbo', 'Mop']);
+
+    await invokeBehaviorCommand(vacuum, 'rvcCleanMode', 'changeToMode', { newMode: 4 });
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('vacuum', 'vacuumcleaner_job_mode', 'mop');
+    await invokeBehaviorCommand(vacuum, 'rvcRunMode', 'changeToMode', { newMode: 2 });
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('vacuum', 'vacuumcleaner_state', 'cleaning');
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Running);
+    expect(vacuum.getAttribute(RvcCleanMode, 'currentMode')).toBe(4);
+    // Matter doesn't change the clean mode while the vacuum cleans.
+    await invokeBehaviorCommand(vacuum, 'rvcCleanMode', 'changeToMode', { newMode: 1 });
+    expect(homey.setCapabilityValue).not.toHaveBeenCalledWith('vacuum', 'vacuumcleaner_job_mode', 'normal');
+
+    await invokeBehaviorCommand(vacuum, 'rvcOperationalState', 'pause');
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('vacuum', 'vacuumcleaner_state', 'stopped');
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Paused);
+    await invokeBehaviorCommand(vacuum, 'rvcOperationalState', 'resume');
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('vacuum', 'vacuumcleaner_state', 'cleaning');
+    await settle();
+    await invokeBehaviorCommand(vacuum, 'rvcOperationalState', 'goHome');
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('vacuum', 'vacuumcleaner_state', 'docked');
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Docked);
+    expect(vacuum.getAttribute(RvcRunMode, 'currentMode')).toBe(1);
+    // A docked vacuum can't be paused or resumed.
+    homey.setCapabilityValue.mockClear();
+    await invokeBehaviorCommand(vacuum, 'rvcOperationalState', 'pause');
+    await invokeBehaviorCommand(vacuum, 'rvcOperationalState', 'resume');
+    expect(homey.setCapabilityValue).not.toHaveBeenCalled();
+
+    homey.report('vacuum', 'vacuumcleaner_state', 'charging');
+    homey.report('vacuum', 'vacuumcleaner_job_mode', 'off');
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Charging);
+    expect(vacuum.getAttribute(RvcCleanMode, 'currentMode')).toBe(1);
+    homey.report('vacuum', 'operational_state', 'error');
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Error);
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalError')?.errorStateId).toBe(RvcOperationalState.ErrorState.UnableToCompleteOperation);
+  });
+
+  test('should start and stop a vacuum that only has onoff', async () => {
+    const vacuum = endpoint('onoff-vacuum');
+    const { OperationalState } = RvcOperationalState;
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Stopped);
+    expect(vacuum.hasClusterServer(RvcCleanMode)).toBe(false);
+    await invokeBehaviorCommand(vacuum, 'rvcRunMode', 'changeToMode', { newMode: 2 });
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('onoff-vacuum', 'onoff', true);
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Running);
+    await invokeBehaviorCommand(vacuum, 'rvcRunMode', 'changeToMode', { newMode: 1 });
+    expect(homey.setCapabilityValue).toHaveBeenLastCalledWith('onoff-vacuum', 'onoff', false);
+    await settle();
+    expect(vacuum.getAttribute(RvcOperationalState, 'operationalState')).toBe(OperationalState.Stopped);
+    expect(vacuum.getAttribute(RvcRunMode, 'currentMode')).toBe(1);
   });
 });

@@ -52,6 +52,9 @@ The Matter device type follows the Homey device class (or the class you chose fo
 | `windowcoverings`, `blinds`, `curtain`, `sunshade`, `shutterblinds` | `windowcoverings_set`, `windowcoverings_state`                                     | Window covering (lift)                                            |
 | `lock`                                                              | `locked`                                                                           | Door lock                                                         |
 | `fan`, `airpurifier`                                                | `onoff`, `fan_speed`                                                               | Fan                                                               |
+| `vacuumcleaner`                                                     | `vacuumcleaner_state` or `onoff`, `operational_state`, `vacuumcleaner_job_mode`    | Robotic vacuum cleaner                                            |
+
+The Off mode of a thermostat or air conditioner turns `onoff` off, and the other modes turn it back on. Only devices without `onoff` get the `off` value of `thermostat_mode`, because some drivers don't switch the device off with it.
 
 Sensors are added to any device that has them:
 
@@ -66,6 +69,26 @@ Sensors are added to any device that has them:
 | `measure_battery`, `alarm_battery`                                                 | Battery power source                             |
 
 Sub-capabilities of sensors, e.g. `measure_temperature.inside`, are exposed too. The outdoor temperature of a thermostat or air conditioner (e.g. `measure_temperature.outdoorTemperature`) is part of the thermostat.
+
+### Color temperature of lights
+
+Homey doesn't give the color temperature of a light in Kelvin or mireds. Its `light_temperature` goes from 0 (the coldest white of the light) to 1 (the warmest white), and Homey doesn't tell which Kelvin range that is for the light.
+
+The plugin therefore maps it onto a default range of 6500 K (153 mireds) to 2000 K (500 mireds) for every light. The coldest and warmest settings of the controller are the coldest and warmest white of the light, but the Kelvin values in between are approximate: a light that only goes from 2700 K to 6500 K looks colder than the controller shows.
+
+### Robotic vacuum cleaners
+
+Vacuums are supported with the standard Homey capabilities and values only:
+
+- Start and stop (the Matter run modes Idle and Cleaning) set `vacuumcleaner_state` to `cleaning` or `stopped`, or turn `onoff` on or off.
+- Go home sets `vacuumcleaner_state` to `docked`. Homey has no standard pause: pause stops the vacuum, resume starts it again.
+- The state comes from `vacuumcleaner_state` (cleaning, docked, charging, stopped) and the standard values of `operational_state` (paused, error).
+- The standard values of `vacuumcleaner_job_mode` (normal, high, turbo, mop, auto) are the Matter clean modes. Matter only changes them while the vacuum is idle.
+- No rooms or maps: Homey has no standard capability for them.
+
+Vacuums without `vacuumcleaner_state` or `onoff` aren't exposed. This includes Matter vacuums paired with Homey: Homey's Matter driver uses the Matter state and mode numbers instead of the standard values. Add such a vacuum to your Matter controller directly instead.
+
+Apple Home doesn't support a vacuum in a bridge, and the whole bridge becomes unstable. If you use Apple Home, add your vacuums to the black list.
 
 ### How devices are composed
 
@@ -92,11 +115,15 @@ The white and black lists accept Homey device IDs as well as names. Entries by n
 
 - New Homey devices need a Matterbridge restart; the frontend asks for it. Deleted devices are removed right away.
 - Devices with the same name get their zone appended, e.g. `Ceiling light Kitchen`.
-- Not supported yet: buttons and remotes, media players and TVs (only their `onoff`), vacuum cleaners, window covering tilt, plant moisture, `level_aqi`.
+- Not supported yet: buttons and remotes, media players and TVs (only their `onoff`), window covering tilt, plant moisture, `level_aqi`.
 
 ## Install
 
-The plugin isn't published on npm yet. Build a tarball and upload it to Matterbridge:
+On the Home page of the Matterbridge frontend, enter `matterbridge-homey` in the **Install plugins** panel and click **Install**. Then set the address and API key in the plugin configuration and restart.
+
+### Test builds
+
+To test changes before they are published, build a tarball and upload it to Matterbridge:
 
 ```bash
 npm install
@@ -104,9 +131,9 @@ npm link matterbridge
 npm run pack:tarball
 ```
 
-This creates `matterbridge-homey-<version>-dev-<date>-<time>.tgz` in the project folder (`npm run pack:tarball -- --release` keeps the plain version). On the Home page of the Matterbridge frontend, click **Upload** in the **Install plugins** panel and choose the tarball (the panel is hidden when Matterbridge runs read-only). Matterbridge installs it with `npm install -g <tarball> --omit=dev`, so the host needs access to the npm registry for `homey-api`. Then set the address and API key in the plugin configuration and restart.
+This creates `matterbridge-homey-<version>-dev-<date>-<time>.tgz` in the project folder (`npm run pack:tarball -- --release` keeps the plain version). On the Home page of the Matterbridge frontend, click **Upload** in the **Install plugins** panel and choose the tarball (the panel is hidden when Matterbridge runs read-only). Matterbridge installs it with `npm install -g <tarball> --omit=dev`, so the host needs access to the npm registry for `homey-api`.
 
-Uploading a newer tarball replaces the installed version.
+Uploading a newer tarball replaces the installed version. Test builds are marked private in their `package.json`: when the plugin is missing at start, e.g. after Docker recreated the Matterbridge container for an image update, Matterbridge reinstalls a private plugin from the last uploaded tarball instead of from npm. Release builds are reinstalled from npm.
 
 ## Development
 

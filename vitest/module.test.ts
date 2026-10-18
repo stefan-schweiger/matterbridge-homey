@@ -45,6 +45,7 @@ import {
   removeBridgedEndpoint,
 } from 'matterbridge/vitest-utils/matter';
 
+import { HomeyBridgedDevice } from '../src/homeyDevice.js';
 import { HomeyPlatform, type HomeyPlatformConfig } from '../src/module.js';
 import { createDevice, FakeHomey, zones } from './fakeHomey.js';
 
@@ -372,5 +373,19 @@ describe('HomeyPlatform', () => {
     const failing = new HomeyPlatform(getMatterbridge(), log, config, unreachable);
     await expect(failing.onStart('Vitest')).rejects.toThrow('Unable to connect to Homey at http://192.168.1.50: ECONNREFUSED');
     await failing.onShutdown('Vitest');
+  });
+
+  test('should skip a device that fails to build and still start', async () => {
+    const broken = new FakeHomey();
+    broken.devices = [createDevice('broken', 'Broken light', 'light', { onoff: true })];
+    broken.zones = zones;
+    vi.spyOn(HomeyBridgedDevice, 'create').mockImplementationOnce(() => {
+      throw new Error('Conformance error');
+    });
+    const skipping = new HomeyPlatform(getMatterbridge(), log, config, broken);
+    await expect(skipping.onStart('Vitest')).resolves.toBeUndefined();
+    expect(skipping.bridgedDevices.size).toBe(0);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to register device Broken light'));
+    await skipping.onShutdown('Vitest');
   });
 });
