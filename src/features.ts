@@ -880,20 +880,17 @@ function vacuumFeature(device: HomeyDevice): Feature {
         if (request.newMode === vacuumCleaningMode) start();
         else if (request.newMode === vacuumIdleMode) stop('stopped', true);
       });
+      // Matterbridge 3.11 types the operational state as a number or one of two enums, so it is compared as a number.
+      const isInState = (state: number, ...states: number[]): boolean => states.includes(state);
       // Not reflected: the vacuum stays paused in Matter, so it can be resumed.
       endpoint.addCommandHandler('RvcOperationalState.pause', ({ attributes }) => {
-        if (attributes.operationalState === OperationalState.Running || attributes.operationalState === OperationalState.SeekingCharger) stop('stopped', false);
+        if (isInState(attributes.operationalState, OperationalState.Running, OperationalState.SeekingCharger)) stop('stopped', false);
       });
       endpoint.addCommandHandler('RvcOperationalState.resume', ({ attributes }) => {
-        if (attributes.operationalState === OperationalState.Paused) start();
+        if (isInState(attributes.operationalState, OperationalState.Paused)) start();
       });
       endpoint.addCommandHandler('RvcOperationalState.goHome', ({ attributes }) => {
-        if (
-          attributes.operationalState === OperationalState.Stopped ||
-          attributes.operationalState === OperationalState.Running ||
-          attributes.operationalState === OperationalState.Paused
-        )
-          stop('docked', true);
+        if (isInState(attributes.operationalState, OperationalState.Stopped, OperationalState.Running, OperationalState.Paused)) stop('docked', true);
       });
       if (cleanModeIds.length > 0) {
         endpoint.addCommandHandler('RvcCleanMode.changeToMode', ({ request, attributes }) => {
