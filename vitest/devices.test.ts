@@ -158,6 +158,7 @@ describe('Homey device mapping', () => {
         outletList: [],
         capabilityBlackList: [],
         deviceCapabilityBlackList: {},
+        exposeNewDevices: true,
         debug: true,
         unregisterOnShutdown: true,
       },

@@ -49,6 +49,8 @@ export type HomeyPlatformConfig = BasePlatformConfig & {
   capabilityBlackList: string[];
   /** Capabilities not exposed per device: device name or ID -> capability IDs. */
   deviceCapabilityBlackList: Record<string, string[]>;
+  /** Expose the devices added to Homey while the plugin runs, without a restart. */
+  exposeNewDevices: boolean;
 };
 
 /**
@@ -139,6 +141,12 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
   readonly bridgedDevices = new Map<string, HomeyBridgedDevice>();
   /** The Homey zones, for the device names. */
   private zones: HomeyZone[] = [];
+  /** Devices added to Homey while the plugin runs that aren't exposed yet. Homey can complete a new device after creating it, so they are tried again when they change. */
+  private readonly newDeviceIds = new Set<string>();
+  /** Whether onConfigure applied the Homey state to the devices and subscribed them: the devices exposed later do it themselves. */
+  private areDevicesConfigured = false;
+  /** The device changes in progress, applied one at a time in the order Homey sent them. */
+  private deviceChanges: Promise<void> = Promise.resolve();
 
   /**
    * Create the Homey platform
@@ -179,20 +187,38 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
     this.config.outletList = isValidArray(config.outletList) ? config.outletList : [];
     this.config.capabilityBlackList = isValidArray(config.capabilityBlackList) ? config.capabilityBlackList : [];
     this.config.deviceCapabilityBlackList = isValidObject(config.deviceCapabilityBlackList) ? config.deviceCapabilityBlackList : {};
+    this.config.exposeNewDevices ??= true;
     this.config.debug ??= false;
     this.config.unregisterOnShutdown ??= false;
 
     this.homey =
       homey ?? new HomeyApiConnection(config.address, config.token, 15000, config.debug ? (message: string): void => this.log.debug(`[homey-api] ${message}`) : undefined);
     this.homey.on('device.create', (device: HomeyDevice) => {
-      this.log.notice(`New Homey device ${CYAN}${device.name}${nf}: restart Matterbridge to expose it`);
-      if (this.isConfigured) this.wssSendRestartRequired();
+      if (!this.config.exposeNewDevices) {
+        this.log.notice(`New Homey device ${CYAN}${device.name}${nf}: restart Matterbridge to expose it`);
+        if (this.isConfigured) this.wssSendRestartRequired();
+        return;
+      }
+      this.log.notice(`New Homey device ${CYAN}${device.name}${nf}`);
+      fireAndForget(
+        this.serialize(async () => this.addNewDevice(device)),
+        this.log,
+        `addition of ${device.name}`,
+      );
     });
     this.homey.on('device.update', (device: HomeyDevice) => {
-      fireAndForget(this.updateDevice(device), this.log, `update of ${device.name}`);
+      fireAndForget(
+        this.serialize(async () => this.updateDevice(device)),
+        this.log,
+        `update of ${device.name}`,
+      );
     });
     this.homey.on('device.delete', (device: HomeyDevice) => {
-      fireAndForget(this.removeDevice(device.id), this.log, `removal of ${device.id}`);
+      fireAndForget(
+        this.serialize(async () => this.removeDevice(device.id)),
+        this.log,
+        `removal of ${device.id}`,
+      );
     });
     this.homey.on('disconnected', () => {
       this.log.warn('Disconnected from Homey');
@@ -220,23 +246,29 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
     }
     this.log.notice(`Connected to Homey ${CYAN}${this.homey.homeyId ?? ''}${nf}`);
 
-    const [devices, zones] = await Promise.all([this.homey.getDevices(), this.homey.getZones()]);
-    this.zones = zones;
-    this.log.info(`Found ${CYAN}${devices.length}${nf} devices in ${CYAN}${zones.length}${nf} zones`);
-    const names = getUniqueDeviceNames(devices, zones);
-    for (const device of devices.toSorted((a, b) => a.name.localeCompare(b.name))) {
-      await this.addDevice(device, names.get(device.id) ?? device.name, zones);
-    }
+    // The device events that arrive meanwhile wait until the devices are registered.
+    await this.serialize(async () => {
+      const [devices, zones] = await Promise.all([this.homey.getDevices(), this.homey.getZones()]);
+      this.zones = zones;
+      this.log.info(`Found ${CYAN}${devices.length}${nf} devices in ${CYAN}${zones.length}${nf} zones`);
+      const names = getUniqueDeviceNames(devices, zones);
+      for (const device of devices.toSorted((a, b) => a.name.localeCompare(b.name))) {
+        await this.addDevice(device, names.get(device.id) ?? device.name, zones);
+      }
+    });
     this.log.info(`Started platform ${idn}${this.config.name}${rs}${nf} with ${CYAN}${this.bridgedDevices.size}${nf} devices`);
   }
 
   override async onConfigure(): Promise<void> {
     await super.onConfigure();
     this.log.info(`Configuring platform ${idn}${this.config.name}${rs}${nf}...`);
-    for (const bridgedDevice of this.bridgedDevices.values()) {
-      await bridgedDevice.applyAll();
-      bridgedDevice.subscribe();
-    }
+    await this.serialize(async () => {
+      for (const bridgedDevice of this.bridgedDevices.values()) {
+        await bridgedDevice.applyAll();
+        bridgedDevice.subscribe();
+      }
+      this.areDevicesConfigured = true;
+    });
     this.log.info(`Configured platform ${idn}${this.config.name}${rs}${nf}`);
   }
 
@@ -323,16 +355,48 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /**
+   * Expose a device that was added to Homey while the plugin runs
+   *
+   * Names are unique across all the Homey devices, like on start, so the new device can change the zone suffix of other devices too.
+   *
+   * @param {HomeyDevice} device The new Homey device.
+   * @returns {Promise<void>} Resolves when the device is exposed or skipped.
+   */
+  private async addNewDevice(device: HomeyDevice): Promise<void> {
+    if (this.bridgedDevices.has(device.id)) return;
+    const [devices, zones] = await Promise.all([this.homey.getDevices(), this.homey.getZones()]);
+    this.zones = zones;
+    const names = getUniqueDeviceNames([...devices.filter((other) => other.id !== device.id), device], zones);
+    // Rename the other devices first: the new device can get the current name of one of them.
+    for (const [deviceId, bridged] of this.bridgedDevices) await bridged.setName(names.get(deviceId) ?? bridged.device.name);
+    await this.addDevice(device, names.get(device.id) ?? device.name, zones);
+    const bridgedDevice = this.bridgedDevices.get(device.id);
+    if (!bridgedDevice) {
+      this.newDeviceIds.add(device.id);
+      return;
+    }
+    this.newDeviceIds.delete(device.id);
+    // Before onConfigure, onConfigure applies the Homey state and subscribes.
+    if (!this.areDevicesConfigured) return;
+    await bridgedDevice.applyAll();
+    bridgedDevice.subscribe();
+  }
+
+  /**
    * Update the Matter device of a Homey device that changed, e.g. its availability or its name
    *
    * Names are unique across all the Homey devices, so a rename can change the zone suffix of other devices too.
+   * A new device that isn't exposed yet is tried again.
    *
    * @param {HomeyDevice} device The updated Homey device.
    * @returns {Promise<void>} Resolves when the Matter devices are updated.
    */
   private async updateDevice(device: HomeyDevice): Promise<void> {
     const bridgedDevice = this.bridgedDevices.get(device.id);
-    if (!bridgedDevice) return;
+    if (!bridgedDevice) {
+      if (this.newDeviceIds.has(device.id)) await this.addNewDevice(device);
+      return;
+    }
     const isRenamed = device.name !== bridgedDevice.homeyName;
     await bridgedDevice.update(device);
     if (!isRenamed) return;
@@ -347,11 +411,26 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
    * @returns {Promise<void>} Resolves when the device is unregistered.
    */
   private async removeDevice(deviceId: string): Promise<void> {
+    this.newDeviceIds.delete(deviceId);
     const bridgedDevice = this.bridgedDevices.get(deviceId);
     if (!bridgedDevice) return;
     this.log.notice(`Homey device ${CYAN}${bridgedDevice.device.name}${nf} was deleted: removing it`);
     bridgedDevice.unsubscribe();
     this.bridgedDevices.delete(deviceId);
     await this.unregisterDevice(bridgedDevice.endpoint);
+  }
+
+  /**
+   * Run a device change after the changes in progress, so a device can't be registered twice or removed while it's registered
+   *
+   * @param {() => Promise<void>} change The device change.
+   * @returns {Promise<void>} Resolves or rejects with the change.
+   */
+  private async serialize(change: () => Promise<void>): Promise<void> {
+    const result = this.deviceChanges.then(change);
+    this.deviceChanges = result.catch(() => {
+      // The caller gets the error, and the next change runs anyway.
+    });
+    await result;
   }
 }

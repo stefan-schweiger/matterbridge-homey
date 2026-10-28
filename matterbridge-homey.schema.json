@@ -104,6 +104,12 @@
         "selectDeviceEntityFrom": "name"
       }
     },
+    "exposeNewDevices": {
+      "title": "Expose New Devices",
+      "description": "Expose the devices added to Homey right away, without restarting Matterbridge. The white list, black list and zone white list still apply. When off, new devices are exposed after the next restart.",
+      "type": "boolean",
+      "default": true
+    },
     "debug": {
       "title": "Enable Debug",
       "description": "Enable debug mode for the plugin. Only for debugging purposes, not recommended for production use.",

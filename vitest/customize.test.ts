@@ -70,6 +70,7 @@ describe('Remapping devices and excluding capabilities', () => {
         outletList: [getSerialNumber(lampId)],
         capabilityBlackList: ['meter_power'],
         deviceCapabilityBlackList: { Multisensor: ['alarm_occupancy'], humidity: ['measure_humidity'] },
+        exposeNewDevices: true,
         debug: false,
         unregisterOnShutdown: false,
       },

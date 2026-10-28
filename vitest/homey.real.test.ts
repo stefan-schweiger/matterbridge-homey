@@ -106,6 +106,7 @@ describe.skipIf(env.HOMEY_REAL_TEST !== '1' || !address || !token)('HomeyPlatfor
         outletList: [],
         capabilityBlackList: [],
         deviceCapabilityBlackList: {},
+        exposeNewDevices: true,
         debug: false,
         unregisterOnShutdown: false,
       },

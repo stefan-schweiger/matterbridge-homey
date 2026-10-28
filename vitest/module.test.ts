@@ -31,7 +31,7 @@ import {
   Thermostat,
   WindowCovering,
 } from 'matterbridge/matter/clusters';
-import { flushAsync, log, loggerErrorSpy, setupTest } from 'matterbridge/vitest-utils';
+import { flushAsync, log, loggerErrorSpy, loggerNoticeSpy, setupTest } from 'matterbridge/vitest-utils';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -62,6 +62,9 @@ const ids = {
   remote: '00000000-0000-4000-8000-000000000008',
   hidden: '00000000-0000-4000-8000-000000000009',
   garage: '00000000-0000-4000-8000-000000000010',
+  newLight: '00000000-0000-4000-8000-000000000011',
+  newPlug: '00000000-0000-4000-8000-000000000012',
+  newSensor: '00000000-0000-4000-8000-000000000013',
 };
 
 /**
@@ -88,6 +91,7 @@ describe('HomeyPlatform', () => {
     outletList: [],
     capabilityBlackList: [],
     deviceCapabilityBlackList: {},
+    exposeNewDevices: true,
     debug: false,
     unregisterOnShutdown: false,
   };
@@ -354,6 +358,43 @@ describe('HomeyPlatform', () => {
     expect(homey.capabilityListeners.has(`${ids.fan}/onoff`)).toBe(false);
   });
 
+  test('should expose a device added to Homey without a restart', async () => {
+    const parts = aggregator.parts.size;
+    const device = createDevice(ids.newLight, 'Desk lamp', 'light', { onoff: false });
+    homey.devices.push(device);
+    homey.emit('device.create', device);
+    await settle();
+    expect(aggregator.parts.size).toBe(parts + 1);
+    expect(endpoint(ids.newLight).getAttribute(BridgedDeviceBasicInformation, 'nodeLabel')).toBe('Desk lamp');
+
+    homey.report(ids.newLight, 'onoff', true);
+    await settle();
+    expect(endpoint(ids.newLight).getAttribute(OnOff, 'onOff')).toBe(true);
+  });
+
+  test('should append the zone to a new device and the exposed device with the same name', async () => {
+    const device = createDevice(ids.newPlug, 'Plug', 'socket', { onoff: false }, { zone: 'zone-living' });
+    homey.devices.push(device);
+    homey.emit('device.create', device);
+    await settle();
+    expect(endpoint(ids.newPlug).getAttribute(BridgedDeviceBasicInformation, 'nodeLabel')).toBe('Plug Living room');
+    expect(endpoint(ids.socket).getAttribute(BridgedDeviceBasicInformation, 'nodeLabel')).toBe('Plug Kitchen');
+  });
+
+  test('should expose a new device once Homey reports the capabilities it supports', async () => {
+    const device = createDevice(ids.newSensor, 'Door sensor', 'sensor', {}, { ready: false });
+    homey.devices.push(device);
+    homey.emit('device.create', device);
+    await settle();
+    expect(platform.bridgedDevices.has(ids.newSensor)).toBe(false);
+
+    // Homey completes the device after creating it.
+    homey.emit('device.update', createDevice(ids.newSensor, 'Door sensor', 'sensor', { alarm_contact: true }));
+    await settle();
+    expect(endpoint(ids.newSensor).hasClusterServer(BooleanState)).toBe(true);
+    expect(homey.capabilityListeners.has(`${ids.newSensor}/alarm_contact`)).toBe(true);
+  });
+
   test('should change the logger level', async () => {
     await platform.onChangeLoggerLevel(LogLevel.DEBUG);
     expect(endpoint(ids.sensor).log.logLevel).toBe(LogLevel.DEBUG);
@@ -373,6 +414,39 @@ describe('HomeyPlatform', () => {
     const failing = new HomeyPlatform(getMatterbridge(), log, config, unreachable);
     await expect(failing.onStart('Vitest')).rejects.toThrow('Unable to connect to Homey at http://192.168.1.50: ECONNREFUSED');
     await failing.onShutdown('Vitest');
+  });
+
+  test('should ask for a restart instead of exposing a new device when exposeNewDevices is off', async () => {
+    const manual = new FakeHomey();
+    manual.zones = zones;
+    const restarting = new HomeyPlatform(getMatterbridge(), log, { ...config, exposeNewDevices: false }, manual);
+    await restarting.onStart('Vitest');
+    const device = createDevice('manual', 'Manual lamp', 'light', { onoff: true });
+    manual.devices.push(device);
+    manual.emit('device.create', device);
+    await settle();
+    expect(restarting.bridgedDevices.size).toBe(0);
+    expect(loggerNoticeSpy).toHaveBeenCalledWith(expect.stringContaining('restart Matterbridge to expose it'));
+    await restarting.onShutdown('Vitest');
+  });
+
+  test('should subscribe a device added between start and configure on configure', async () => {
+    const early = new FakeHomey();
+    early.zones = zones;
+    const starting = new HomeyPlatform(getMatterbridge(), log, config, early);
+    // @ts-expect-error - setMatterNode is intentionally private
+    starting.setMatterNode(addBridgedEndpoint, removeBridgedEndpoint, removeAllBridgedEndpoints, addVirtualEndpoint);
+    await starting.onStart('Vitest');
+    const device = createDevice('early', 'Early lamp', 'light', { onoff: true });
+    early.devices.push(device);
+    early.emit('device.create', device);
+    await settle();
+    expect(starting.bridgedDevices.has('early')).toBe(true);
+    expect(early.capabilityListeners.size).toBe(0);
+
+    await starting.onConfigure();
+    expect(early.capabilityListeners.has('early/onoff')).toBe(true);
+    await starting.onShutdown('Vitest');
   });
 
   test('should skip a device that fails to build and still start', async () => {

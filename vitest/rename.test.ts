@@ -61,6 +61,7 @@ async function start(lampName: string): Promise<{ homey: FakeHomey; platform: Ho
       outletList: [],
       capabilityBlackList: [],
       deviceCapabilityBlackList: {},
+      exposeNewDevices: true,
       debug: false,
       unregisterOnShutdown: false,
     },

@@ -36,6 +36,7 @@ The key is shown only once, so copy it right away.
 | `outletList`                | These devices are exposed as plugs, whatever their Homey class.                                                                                             |
 | `capabilityBlackList`       | These Homey capabilities are never exposed, e.g. `meter_power`.                                                                                             |
 | `deviceCapabilityBlackList` | Capabilities not exposed for one device: the device name (or ID) and its list of capabilities, e.g. `{ "Multisensor": ["alarm_occupancy"] }`.               |
+| `exposeNewDevices`          | Expose devices added to Homey right away, without a restart (default on). The lists above still apply. When off, new devices are exposed after a restart.   |
 | `debug`                     | Log the homey-api debug output.                                                                                                                             |
 | `unregisterOnShutdown`      | Remove all devices from the controllers on shutdown. For development only.                                                                                  |
 
@@ -113,7 +114,8 @@ The white and black lists accept Homey device IDs as well as names. Entries by n
 
 ### Limitations
 
-- New Homey devices need a Matterbridge restart; the frontend asks for it. Deleted devices are removed right away.
+- New Homey devices are exposed right away and deleted devices are removed right away. With `exposeNewDevices` off, new devices need a Matterbridge restart; the frontend asks for it. To keep new devices out entirely, use the white list.
+- A new device is exposed with the capabilities Homey reports for it. Capabilities that its app adds later appear after a restart.
 - Devices with the same name get their zone appended, e.g. `Ceiling light Kitchen`.
 - Not supported yet: buttons and remotes, media players and TVs (only their `onoff`), window covering tilt, plant moisture, `level_aqi`.
 
