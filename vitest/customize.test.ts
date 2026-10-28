@@ -9,7 +9,6 @@ const MATTER_PORT = 6600;
 
 import { onOffLight, onOffPlugInUnit, type MatterbridgeEndpoint } from 'matterbridge';
 import { ElectricalEnergyMeasurement, OccupancySensing, RelativeHumidityMeasurement, Thermostat } from 'matterbridge/matter/clusters';
-import { log, setupTest } from 'matterbridge/vitest-utils';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -20,7 +19,8 @@ import {
   getMatterbridge,
   removeAllBridgedEndpoints,
   removeBridgedEndpoint,
-} from 'matterbridge/vitest-utils/matter';
+} from 'matterbridge/test-utils/vitest/matter';
+import { log, setupTest } from 'matterbridge/test-utils/vitest/setup';
 
 import { getSerialNumber } from '../src/homeyDevice.js';
 import { HomeyPlatform } from '../src/module.js';
@@ -70,7 +70,7 @@ describe('Remapping devices and excluding capabilities', () => {
         outletList: [getSerialNumber(lampId)],
         capabilityBlackList: ['meter_power'],
         deviceCapabilityBlackList: { Multisensor: ['alarm_occupancy'], humidity: ['measure_humidity'] },
-        exposeNewDevices: true,
+        newDevices: 'default',
         debug: false,
         unregisterOnShutdown: false,
       },

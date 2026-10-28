@@ -9,7 +9,6 @@ const MATTER_PORT = 6500;
 
 import type { MatterbridgeEndpoint } from 'matterbridge';
 import { BridgedDeviceBasicInformation } from 'matterbridge/matter/clusters';
-import { log, setupTest } from 'matterbridge/vitest-utils';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -20,7 +19,8 @@ import {
   getMatterbridge,
   removeAllBridgedEndpoints,
   removeBridgedEndpoint,
-} from 'matterbridge/vitest-utils/matter';
+} from 'matterbridge/test-utils/vitest/matter';
+import { log, setupTest } from 'matterbridge/test-utils/vitest/setup';
 
 import { createStableUniqueId } from '../src/homeyDevice.js';
 import { HomeyPlatform } from '../src/module.js';
@@ -61,7 +61,7 @@ async function start(lampName: string): Promise<{ homey: FakeHomey; platform: Ho
       outletList: [],
       capabilityBlackList: [],
       deviceCapabilityBlackList: {},
-      exposeNewDevices: true,
+      newDevices: 'default',
       debug: false,
       unregisterOnShutdown: false,
     },

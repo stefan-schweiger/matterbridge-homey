@@ -10,7 +10,6 @@ const REALTIME_WAIT = Number(process.env.HOMEY_REALTIME_WAIT ?? 30000);
 
 import { existsSync, readFileSync } from 'node:fs';
 
-import { log, loggerErrorSpy, setupTest } from 'matterbridge/vitest-utils';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -21,7 +20,8 @@ import {
   getMatterbridge,
   removeAllBridgedEndpoints,
   removeBridgedEndpoint,
-} from 'matterbridge/vitest-utils/matter';
+} from 'matterbridge/test-utils/vitest/matter';
+import { log, loggerErrorSpy, setupTest } from 'matterbridge/test-utils/vitest/setup';
 
 import { type CapabilityListener, HomeyApiConnection, type HomeyCapabilityValue } from '../src/homey.js';
 import { HomeyPlatform } from '../src/module.js';
@@ -106,7 +106,7 @@ describe.skipIf(env.HOMEY_REAL_TEST !== '1' || !address || !token)('HomeyPlatfor
         outletList: [],
         capabilityBlackList: [],
         deviceCapabilityBlackList: {},
-        exposeNewDevices: true,
+        newDevices: 'default',
         debug: false,
         unregisterOnShutdown: false,
       },

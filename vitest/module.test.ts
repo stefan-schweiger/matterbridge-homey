@@ -31,7 +31,7 @@ import {
   Thermostat,
   WindowCovering,
 } from 'matterbridge/matter/clusters';
-import { flushAsync, log, loggerErrorSpy, loggerNoticeSpy, setupTest } from 'matterbridge/vitest-utils';
+import { flushAsync } from 'matterbridge/test-utils';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -43,7 +43,8 @@ import {
   getMatterbridge,
   removeAllBridgedEndpoints,
   removeBridgedEndpoint,
-} from 'matterbridge/vitest-utils/matter';
+} from 'matterbridge/test-utils/vitest/matter';
+import { log, loggerErrorSpy, setupTest } from 'matterbridge/test-utils/vitest/setup';
 
 import { HomeyBridgedDevice } from '../src/homeyDevice.js';
 import { HomeyPlatform, type HomeyPlatformConfig } from '../src/module.js';
@@ -91,7 +92,7 @@ describe('HomeyPlatform', () => {
     outletList: [],
     capabilityBlackList: [],
     deviceCapabilityBlackList: {},
-    exposeNewDevices: true,
+    newDevices: 'default',
     debug: false,
     unregisterOnShutdown: false,
   };
@@ -414,20 +415,6 @@ describe('HomeyPlatform', () => {
     const failing = new HomeyPlatform(getMatterbridge(), log, config, unreachable);
     await expect(failing.onStart('Vitest')).rejects.toThrow('Unable to connect to Homey at http://192.168.1.50: ECONNREFUSED');
     await failing.onShutdown('Vitest');
-  });
-
-  test('should ask for a restart instead of exposing a new device when exposeNewDevices is off', async () => {
-    const manual = new FakeHomey();
-    manual.zones = zones;
-    const restarting = new HomeyPlatform(getMatterbridge(), log, { ...config, exposeNewDevices: false }, manual);
-    await restarting.onStart('Vitest');
-    const device = createDevice('manual', 'Manual lamp', 'light', { onoff: true });
-    manual.devices.push(device);
-    manual.emit('device.create', device);
-    await settle();
-    expect(restarting.bridgedDevices.size).toBe(0);
-    expect(loggerNoticeSpy).toHaveBeenCalledWith(expect.stringContaining('restart Matterbridge to expose it'));
-    await restarting.onShutdown('Vitest');
   });
 
   test('should subscribe a device added between start and configure on configure', async () => {

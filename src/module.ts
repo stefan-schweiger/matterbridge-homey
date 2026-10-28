@@ -49,8 +49,8 @@ export type HomeyPlatformConfig = BasePlatformConfig & {
   capabilityBlackList: string[];
   /** Capabilities not exposed per device: device name or ID -> capability IDs. */
   deviceCapabilityBlackList: Record<string, string[]>;
-  /** Expose the devices added to Homey while the plugin runs, without a restart. */
-  exposeNewDevices: boolean;
+  /** What happens to the devices added to Homey: the lists apply as they are, or the device is added to the white or black list. */
+  newDevices: 'default' | 'whiteList' | 'blackList';
 };
 
 /**
@@ -143,6 +143,8 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
   private zones: HomeyZone[] = [];
   /** Devices added to Homey while the plugin runs that aren't exposed yet. Homey can complete a new device after creating it, so they are tried again when they change. */
   private readonly newDeviceIds = new Set<string>();
+  /** The Homey devices seen so far, saved in the plugin storage to recognize the devices added while Matterbridge was stopped. */
+  private readonly knownDeviceIds = new Set<string>();
   /** Whether onConfigure applied the Homey state to the devices and subscribed them: the devices exposed later do it themselves. */
   private areDevicesConfigured = false;
   /** The device changes in progress, applied one at a time in the order Homey sent them. */
@@ -187,18 +189,13 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
     this.config.outletList = isValidArray(config.outletList) ? config.outletList : [];
     this.config.capabilityBlackList = isValidArray(config.capabilityBlackList) ? config.capabilityBlackList : [];
     this.config.deviceCapabilityBlackList = isValidObject(config.deviceCapabilityBlackList) ? config.deviceCapabilityBlackList : {};
-    this.config.exposeNewDevices ??= true;
+    this.config.newDevices = config.newDevices === 'whiteList' || config.newDevices === 'blackList' ? config.newDevices : 'default';
     this.config.debug ??= false;
     this.config.unregisterOnShutdown ??= false;
 
     this.homey =
       homey ?? new HomeyApiConnection(config.address, config.token, 15000, config.debug ? (message: string): void => this.log.debug(`[homey-api] ${message}`) : undefined);
     this.homey.on('device.create', (device: HomeyDevice) => {
-      if (!this.config.exposeNewDevices) {
-        this.log.notice(`New Homey device ${CYAN}${device.name}${nf}: restart Matterbridge to expose it`);
-        if (this.isConfigured) this.wssSendRestartRequired();
-        return;
-      }
       this.log.notice(`New Homey device ${CYAN}${device.name}${nf}`);
       fireAndForget(
         this.serialize(async () => this.addNewDevice(device)),
@@ -252,9 +249,13 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
       this.zones = zones;
       this.log.info(`Found ${CYAN}${devices.length}${nf} devices in ${CYAN}${zones.length}${nf} zones`);
       const names = getUniqueDeviceNames(devices, zones);
+      // The devices added while Matterbridge was stopped are new. On the first start, all the devices are known.
+      const knownDeviceIds = await this.context?.get<string[] | undefined>('knownDeviceIds');
       for (const device of devices.toSorted((a, b) => a.name.localeCompare(b.name))) {
-        await this.addDevice(device, names.get(device.id) ?? device.name, zones);
+        await this.addDevice(device, names.get(device.id) ?? device.name, zones, knownDeviceIds?.includes(device.id) === false);
+        this.knownDeviceIds.add(device.id);
       }
+      await this.saveKnownDevices();
     });
     this.log.info(`Started platform ${idn}${this.config.name}${rs}${nf} with ${CYAN}${this.bridgedDevices.size}${nf} devices`);
   }
@@ -302,9 +303,10 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
    * @param {HomeyDevice} device The Homey device.
    * @param {string} name The unique Matter device name.
    * @param {HomeyZone[]} zones The Homey zones, for the zone filter.
+   * @param {boolean} [isNew] Whether the device was added to Homey since the last start, so the newDevices setting applies.
    * @returns {Promise<void>} Resolves when the device is registered or skipped.
    */
-  private async addDevice(device: HomeyDevice, name: string, zones: HomeyZone[]): Promise<void> {
+  private async addDevice(device: HomeyDevice, name: string, zones: HomeyZone[], isNew = false): Promise<void> {
     // The device can be referred to by its Matter name, its Homey name, its Homey ID or its serial number.
     const serial = getSerialNumber(device.id);
     const keys = [name, device.name, device.id, serial];
@@ -326,6 +328,7 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
     for (const entity of entities) this.setSelectEntity(entity.name, entity.description, 'component');
     // The picker serial must be the serial number of the Matter device, or the frontend lists the device twice.
     this.setSelectDevice(serial, name, configUrl, 'hub', entities);
+    if (isNew) this.listNewDevice(keys);
     if (!this.validateDevice(keys)) return;
 
     const excludedCapabilities = new Set([...this.config.capabilityBlackList, ...keys.flatMap((key) => this.config.deviceCapabilityBlackList[key] ?? [])]);
@@ -364,12 +367,16 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
    */
   private async addNewDevice(device: HomeyDevice): Promise<void> {
     if (this.bridgedDevices.has(device.id)) return;
+    if (!this.knownDeviceIds.has(device.id)) {
+      this.knownDeviceIds.add(device.id);
+      await this.saveKnownDevices();
+    }
     const [devices, zones] = await Promise.all([this.homey.getDevices(), this.homey.getZones()]);
     this.zones = zones;
     const names = getUniqueDeviceNames([...devices.filter((other) => other.id !== device.id), device], zones);
     // Rename the other devices first: the new device can get the current name of one of them.
     for (const [deviceId, bridged] of this.bridgedDevices) await bridged.setName(names.get(deviceId) ?? bridged.device.name);
-    await this.addDevice(device, names.get(device.id) ?? device.name, zones);
+    await this.addDevice(device, names.get(device.id) ?? device.name, zones, true);
     const bridgedDevice = this.bridgedDevices.get(device.id);
     if (!bridgedDevice) {
       this.newDeviceIds.add(device.id);
@@ -412,12 +419,38 @@ export class HomeyPlatform extends MatterbridgeDynamicPlatform {
    */
   private async removeDevice(deviceId: string): Promise<void> {
     this.newDeviceIds.delete(deviceId);
+    if (this.knownDeviceIds.delete(deviceId)) await this.saveKnownDevices();
     const bridgedDevice = this.bridgedDevices.get(deviceId);
     if (!bridgedDevice) return;
     this.log.notice(`Homey device ${CYAN}${bridgedDevice.device.name}${nf} was deleted: removing it`);
     bridgedDevice.unsubscribe();
     this.bridgedDevices.delete(deviceId);
     await this.unregisterDevice(bridgedDevice.endpoint);
+  }
+
+  /**
+   * Add a new device to the white or black list, as the newDevices setting says, and save the configuration
+   *
+   * @param {string[]} keys The names the device can be listed by: its Matter name first, then its Homey name, ID and serial number.
+   */
+  private listNewDevice(keys: string[]): void {
+    const listName = this.config.newDevices;
+    // An empty white list exposes all the devices, including the new one.
+    if (listName === 'default' || (listName === 'whiteList' && this.config.whiteList.length === 0)) return;
+    const list = this.config[listName];
+    if (keys.some((key) => list.includes(key))) return;
+    list.push(keys[0]);
+    this.log.notice(`Added the new device ${CYAN}${keys[0]}${nf} to the ${listName === 'whiteList' ? 'white' : 'black'} list`);
+    this.saveConfig(this.config);
+  }
+
+  /**
+   * Save the Homey devices seen so far in the plugin storage
+   *
+   * @returns {Promise<void>} Resolves when saved.
+   */
+  private async saveKnownDevices(): Promise<void> {
+    await this.context?.set('knownDeviceIds', [...this.knownDeviceIds]);
   }
 
   /**

@@ -38,6 +38,7 @@ import {
   occupancySensor,
   onOffLight,
   onOffPlugInUnit,
+  powerSource,
   pressureSensor,
   rainSensor,
   roboticVacuumCleaner,
@@ -320,7 +321,7 @@ function lightFeature(device: HomeyDevice): Feature {
     deviceTypes: [deviceType],
     clusters,
     build: (context) => {
-      buildOnOff(context, 'onoff', true);
+      buildOnOff(context, 'onoff');
       if (clusters.includes('LevelControl')) buildLevelControl(context);
       if (hasHueSaturation) buildColorControl(context, hasTemperature);
       else if (hasTemperature) buildColorTemperature(context);
@@ -343,7 +344,7 @@ function plugFeature(device: HomeyDevice, capabilityId: string): Feature {
     deviceTypes: [isDimmable ? dimmablePlugInUnit : onOffPlugInUnit],
     clusters: isDimmable ? ['OnOff', 'LevelControl'] : ['OnOff'],
     build: (context) => {
-      buildOnOff(context, capabilityId, isDimmable);
+      buildOnOff(context, capabilityId);
       if (isDimmable) buildLevelControl(context);
     },
   };
@@ -352,15 +353,15 @@ function plugFeature(device: HomeyDevice, capabilityId: string): Feature {
 /**
  * Build the OnOff cluster connected to a Homey on/off capability
  *
+ * The cluster has the Lighting feature: lights and, since Matter 1.4, plug-in units require it.
+ *
  * @param {FeatureContext} context The feature context.
  * @param {string} capabilityId The on/off capability, e.g. onoff or onoff.output2.
- * @param {boolean} isLighting Whether to create the OnOff cluster with the Lighting feature.
  */
-function buildOnOff(context: FeatureContext, capabilityId: string, isLighting: boolean): void {
+function buildOnOff(context: FeatureContext, capabilityId: string): void {
   const { device, endpoint } = context;
   const isOn = context.value(capabilityId) === true;
-  if (isLighting) endpoint.createDefaultOnOffClusterServer(isOn);
-  else endpoint.createOnOffClusterServer(isOn);
+  endpoint.createDefaultOnOffClusterServer(isOn);
 
   if (hasCapability(device, capabilityId)) {
     endpoint.addCommandHandler('on', () => context.set(capabilityId, true));
@@ -1099,17 +1100,20 @@ function booleanStateFeature(capabilityId: string, deviceType: DeviceTypeDefinit
 function smokeCoAlarmFeature(device: HomeyDevice): Feature {
   const hasSmoke = hasCapability(device, 'alarm_smoke');
   const hasCo = hasCapability(device, 'alarm_co');
+  const hasBattery = hasCapability(device, 'measure_battery') || hasCapability(device, 'alarm_battery');
   const alarmState = (value: HomeyCapabilityValue | undefined): SmokeCoAlarm.AlarmState => (value === true ? SmokeCoAlarm.AlarmState.Critical : SmokeCoAlarm.AlarmState.Normal);
   return {
     name: 'smokecoalarm',
     capabilities: ['alarm_smoke', 'alarm_co'],
-    deviceTypes: [smokeCoAlarm],
+    // Matter requires a power source: the battery of the device, or else mains power.
+    deviceTypes: [smokeCoAlarm, powerSource],
     clusters: ['SmokeCoAlarm'],
     build: (context) => {
       const { endpoint } = context;
       if (hasSmoke && hasCo) endpoint.createDefaultSmokeCOAlarmClusterServer(alarmState(context.value('alarm_smoke')), alarmState(context.value('alarm_co')));
       else if (hasSmoke) endpoint.createSmokeOnlySmokeCOAlarmClusterServer(alarmState(context.value('alarm_smoke')));
       else endpoint.createCoOnlySmokeCOAlarmClusterServer(alarmState(context.value('alarm_co')));
+      if (!hasBattery) endpoint.createDefaultPowerSourceWiredClusterServer();
       if (hasSmoke) {
         context.bind('alarm_smoke', async (value) => {
           await endpoint.updateAttribute(SmokeCoAlarm, 'smokeState', alarmState(value), endpoint.log);

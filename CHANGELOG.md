@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- [platform]: The `newDevices` setting replaces `exposeNewDevices` of 0.3.0: new Homey devices can be added to the white list or the black list automatically, also the devices added while Matterbridge was stopped. The default applies the lists as they are and exposes new devices right away.
+- [build]: The plugin is published to npm by a GitHub workflow when a GitHub release is created.
+- [test]: The tests use the test utilities of Matterbridge 3.11 (`matterbridge/test-utils`).
+
+### Fixed
+
+- [devices]: Plugs have the Lighting feature of the OnOff cluster, and smoke and CO alarms without a battery have a wired power source, as Matter 1.4 requires. Matterbridge 3.11 warned about both.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

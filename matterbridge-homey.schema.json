@@ -104,11 +104,12 @@
         "selectDeviceEntityFrom": "name"
       }
     },
-    "exposeNewDevices": {
-      "title": "Expose New Devices",
-      "description": "Expose the devices added to Homey right away, without restarting Matterbridge. The white list, black list and zone white list still apply. When off, new devices are exposed after the next restart.",
-      "type": "boolean",
-      "default": true
+    "newDevices": {
+      "title": "New Devices",
+      "description": "What happens to the devices added to Homey, also while Matterbridge is stopped. default: the lists apply as they are, so with an empty white list new devices are exposed right away. whiteList: new devices are added to the white list, so they are exposed (only when the white list isn't empty). blackList: new devices are added to the black list, so they aren't exposed until you remove them from it.",
+      "type": "string",
+      "enum": ["default", "whiteList", "blackList"],
+      "default": "default"
     },
     "debug": {
       "title": "Enable Debug",

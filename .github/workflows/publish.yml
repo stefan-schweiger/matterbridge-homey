@@ -1,0 +1,82 @@
+# Publish to npm (plugin), based on the publish workflow v. 2.0.7 of the Matterbridge plugin template
+# Path: .github/workflows/publish.yml
+
+name: Publish to npm
+
+on:
+  release:
+    types: [created]
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # needed for npm trusted publishing (OIDC)
+
+jobs:
+  publish-release:
+    name: Publish release to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - name: Verify Node.js version
+        run: node -v
+
+      - name: Verify Npm version
+        run: npm -v
+
+      - name: Select matterbridge branch
+        id: select_matterbridge_ref
+        shell: bash
+        run: |
+          ref=$(node -p "require('./package.json').automator?.workflow || 'main'")
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Clone matterbridge repo branch ${{ steps.select_matterbridge_ref.outputs.ref }}
+        run: git clone --depth 1 --single-branch --no-tags -b ${{ steps.select_matterbridge_ref.outputs.ref }} https://github.com/Luligu/matterbridge.git ../matterbridge
+
+      - name: Install matterbridge dependencies
+        working-directory: ../matterbridge
+        run: npm ci --no-fund --no-audit
+
+      - name: Build matterbridge
+        working-directory: ../matterbridge
+        run: npm run build
+
+      - name: Link matterbridge globally
+        working-directory: ../matterbridge
+        run: npm link --no-fund --no-audit
+
+      - name: Install plugin dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Link matterbridge in the plugin
+        run: npm link matterbridge --no-fund --no-audit
+
+      - name: Build the plugin
+        run: npm run build
+
+      - name: Typecheck the plugin
+        run: npm run typecheck
+
+      - name: Lint the plugin
+        run: npm run lint
+
+      - name: Run Vitest tests
+        run: npm run test -- --testTimeout=30000
+
+      - name: Publish the plugin to npm with trusted publishing / OIDC
+        run: npm publish

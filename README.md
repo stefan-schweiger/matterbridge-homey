@@ -25,20 +25,20 @@ The key is shown only once, so copy it right away.
 
 ## Configuration
 
-| Setting                     | Description                                                                                                                                                 |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `address`                   | Local address of the Homey, e.g. `http://192.168.1.50`. `https://192-168-1-50.homey.homeylocal.com` also works, unless your router blocks DNS rebinding.    |
-| `token`                     | The API key.                                                                                                                                                |
-| `whiteList`                 | Only these devices are exposed (names or Homey device IDs). Empty exposes all supported devices. The frontend offers a device picker after the first start. |
-| `blackList`                 | These devices are never exposed.                                                                                                                            |
-| `zoneWhiteList`             | Only devices in these Homey zones are exposed, including sub-zones. Empty exposes all zones.                                                                |
-| `lightList`                 | These devices are exposed as lights, whatever their Homey class.                                                                                            |
-| `outletList`                | These devices are exposed as plugs, whatever their Homey class.                                                                                             |
-| `capabilityBlackList`       | These Homey capabilities are never exposed, e.g. `meter_power`.                                                                                             |
-| `deviceCapabilityBlackList` | Capabilities not exposed for one device: the device name (or ID) and its list of capabilities, e.g. `{ "Multisensor": ["alarm_occupancy"] }`.               |
-| `exposeNewDevices`          | Expose devices added to Homey right away, without a restart (default on). The lists above still apply. When off, new devices are exposed after a restart.   |
-| `debug`                     | Log the homey-api debug output.                                                                                                                             |
-| `unregisterOnShutdown`      | Remove all devices from the controllers on shutdown. For development only.                                                                                  |
+| Setting                     | Description                                                                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `address`                   | Local address of the Homey, e.g. `http://192.168.1.50`. `https://192-168-1-50.homey.homeylocal.com` also works, unless your router blocks DNS rebinding.                                                                     |
+| `token`                     | The API key.                                                                                                                                                                                                                 |
+| `whiteList`                 | Only these devices are exposed (names or Homey device IDs). Empty exposes all supported devices. The frontend offers a device picker after the first start.                                                                  |
+| `blackList`                 | These devices are never exposed.                                                                                                                                                                                             |
+| `zoneWhiteList`             | Only devices in these Homey zones are exposed, including sub-zones. Empty exposes all zones.                                                                                                                                 |
+| `lightList`                 | These devices are exposed as lights, whatever their Homey class.                                                                                                                                                             |
+| `outletList`                | These devices are exposed as plugs, whatever their Homey class.                                                                                                                                                              |
+| `capabilityBlackList`       | These Homey capabilities are never exposed, e.g. `meter_power`.                                                                                                                                                              |
+| `deviceCapabilityBlackList` | Capabilities not exposed for one device: the device name (or ID) and its list of capabilities, e.g. `{ "Multisensor": ["alarm_occupancy"] }`.                                                                                |
+| `newDevices`                | What happens to devices added to Homey, also while Matterbridge is stopped: `default` applies the lists as they are, `whiteList` adds them to the white list (when it isn't empty), `blackList` adds them to the black list. |
+| `debug`                     | Log the homey-api debug output.                                                                                                                                                                                              |
+| `unregisterOnShutdown`      | Remove all devices from the controllers on shutdown. For development only.                                                                                                                                                   |
 
 ## Supported devices
 
@@ -114,7 +114,7 @@ The white and black lists accept Homey device IDs as well as names. Entries by n
 
 ### Limitations
 
-- New Homey devices are exposed right away and deleted devices are removed right away. With `exposeNewDevices` off, new devices need a Matterbridge restart; the frontend asks for it. To keep new devices out entirely, use the white list.
+- New Homey devices are exposed right away, unless the lists or `newDevices` keep them out, and deleted devices are removed right away. `newDevices` adds a device to a list by its name: like the other entries by name, it stops matching when the device is renamed.
 - A new device is exposed with the capabilities Homey reports for it. Capabilities that its app adds later appear after a restart.
 - Devices with the same name get their zone appended, e.g. `Ceiling light Kitchen`.
 - Not supported yet: buttons and remotes, media players and TVs (only their `onoff`), window covering tilt, plant moisture, `level_aqi`.
@@ -139,7 +139,16 @@ Uploading a newer tarball replaces the installed version. Test builds are marked
 
 ## Development
 
-The plugin follows the [Matterbridge plugin template](https://github.com/Luligu/matterbridge-plugin-template). Matterbridge must never be a dependency of the plugin: link a global or locally built Matterbridge with `npm link matterbridge` (see the [development guide](https://matterbridge.io/README-DEV.html)).
+The plugin follows the [Matterbridge plugin template](https://github.com/Luligu/matterbridge-plugin-template). Matterbridge must never be a dependency of the plugin: clone and build Matterbridge next to the plugin and link it, like the CI does (see the [development guide](https://matterbridge.io/README-DEV.html)):
+
+```bash
+git clone --depth 1 --single-branch --no-tags https://github.com/Luligu/matterbridge.git ../matterbridge
+(cd ../matterbridge && npm install && npm run build && npm link)
+npm install
+npm run link
+```
+
+A Matterbridge installed with `npm install -g matterbridge` builds the plugin, but the tests and the typecheck fail: its test utilities need Vitest, which only a clone installs. Pull and rebuild the clone to update it. The tests need Matterbridge 3.11 or later.
 
 | Script                  | Purpose                         |
 | ----------------------- | ------------------------------- |
@@ -159,6 +168,16 @@ Source layout:
 - `src/converters.ts`: value conversions (dim ↔ level, hue, mireds, positions, units).
 
 The tests run the platform against a Matter server node with a fake Homey. `vitest/homey.real.test.ts` runs it against your own Homey, read-only (every write is refused): put `HOMEY_ADDRESS`, `HOMEY_TOKEN` and `HOMEY_REAL_TEST=1` in `.env` (ignored by git) and run `npm run test -- vitest/homey.real.test.ts`.
+
+### Publishing
+
+The [Publish to npm](.github/workflows/publish.yml) workflow publishes the plugin when a GitHub release is created: it builds Matterbridge, runs the build, typecheck, lint and tests, and publishes with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), so neither an npm login nor a local Matterbridge is needed.
+
+1. `npm version minor --no-git-tag-version --ignore-scripts` (or `patch`), and move the `[Unreleased]` changes in `CHANGELOG.md` under the new version and date.
+2. Commit and push.
+3. `node scripts/create-release.mjs`: creates the GitHub release from the changelog (needs the [GitHub CLI](https://cli.github.com)), which starts the workflow.
+
+Once, before the first release from the workflow: on npmjs.com, add the trusted publisher in the settings of the package (GitHub Actions, repository `stefan-schweiger/matterbridge-homey`, workflow `publish.yml`).
 
 ## License
 

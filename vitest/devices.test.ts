@@ -38,7 +38,15 @@ import {
   Thermostat,
   WindowCovering,
 } from 'matterbridge/matter/clusters';
-import { flushAsync, log, setupTest } from 'matterbridge/vitest-utils';
+import { flushAsync } from 'matterbridge/test-utils';
+import {
+  getMoveToColorRequest,
+  getMoveToColorTemperatureRequest,
+  getMoveToHueRequest,
+  getMoveToLevelRequest,
+  getMoveToSaturationRequest,
+  getStepRequest,
+} from 'matterbridge/test-utils/matter';
 import {
   addBridgedEndpoint,
   addVirtualEndpoint,
@@ -47,15 +55,10 @@ import {
   destroyTestEnvironment,
   flushServerNode,
   getMatterbridge,
-  getMoveToColorRequest,
-  getMoveToColorTemperatureRequest,
-  getMoveToHueRequest,
-  getMoveToLevelRequest,
-  getMoveToSaturationRequest,
-  getStepRequest,
   removeAllBridgedEndpoints,
   removeBridgedEndpoint,
-} from 'matterbridge/vitest-utils/matter';
+} from 'matterbridge/test-utils/vitest/matter';
+import { log, setupTest } from 'matterbridge/test-utils/vitest/setup';
 
 import { getExposedCapabilities } from '../src/features.js';
 import { HomeyPlatform } from '../src/module.js';
@@ -158,7 +161,7 @@ describe('Homey device mapping', () => {
         outletList: [],
         capabilityBlackList: [],
         deviceCapabilityBlackList: {},
-        exposeNewDevices: true,
+        newDevices: 'default',
         debug: true,
         unregisterOnShutdown: true,
       },

@@ -10,7 +10,7 @@
   "outletList": [],
   "capabilityBlackList": [],
   "deviceCapabilityBlackList": {},
-  "exposeNewDevices": true,
+  "newDevices": "default",
   "debug": false,
   "unregisterOnShutdown": false
 }
